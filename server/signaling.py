@@ -2,10 +2,12 @@
 
 import json
 import asyncio
+import traceback
 from typing import Optional
 
 from aiohttp import web, WSMsgType
-from aiortc import RTCSessionDescription, RTCIceCandidate
+from aiortc import RTCSessionDescription
+from aiortc.sdp import candidate_from_sdp
 
 from .sfu import meeting, Participant
 
@@ -57,6 +59,7 @@ async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
             if msg.type == WSMsgType.TEXT:
                 data = json.loads(msg.data)
                 msg_type = data.get("type")
+                print(f"Received message type: {msg_type} from {participant.id if participant else 'unknown'}")
 
                 if msg_type == "join":
                     # New participant joining
@@ -80,29 +83,54 @@ async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
                 elif msg_type == "offer" and participant:
                     # Handle SDP offer
                     sdp = data.get("sdp")
-                    offer = RTCSessionDescription(sdp=sdp, type="offer")
-                    answer = await meeting.handle_offer(participant, offer)
+                    is_initial = participant.pc is None
+                    print(f"Received offer from {participant.id}, is_initial={is_initial}")
+                    
+                    try:
+                        offer = RTCSessionDescription(sdp=sdp, type="offer")
+                        answer = await meeting.handle_offer(participant, offer)
 
-                    await ws.send_json({
-                        "type": "answer",
-                        "sdp": answer.sdp,
-                    })
+                        await ws.send_json({
+                            "type": "answer",
+                            "sdp": answer.sdp,
+                        })
+                        print(f"Sent answer to {participant.id}")
 
-                    # Schedule relay of new participant's tracks to others
-                    asyncio.create_task(
-                        relay_tracks_and_renegotiate(participant)
-                    )
+                        # Only schedule relay for initial offers, not renegotiations
+                        if is_initial:
+                            asyncio.create_task(
+                                relay_tracks_and_renegotiate(participant)
+                            )
+                    except Exception as e:
+                        print(f"Error handling offer from {participant.id}: {e}")
+                        traceback.print_exc()
+
+                elif msg_type == "answer" and participant:
+                    # Handle SDP answer (from renegotiation)
+                    print(f"Received answer from {participant.id}")
+                    sdp = data.get("sdp")
+                    if participant.pc:
+                        try:
+                            answer = RTCSessionDescription(sdp=sdp, type="answer")
+                            await participant.pc.setRemoteDescription(answer)
+                            print(f"Successfully set remote description for {participant.id}")
+                        except Exception as e:
+                            print(f"Failed to set remote description: {e}")
 
                 elif msg_type == "ice_candidate" and participant:
                     # Handle ICE candidate
                     candidate_data = data.get("candidate")
                     if candidate_data and participant.pc:
-                        candidate = RTCIceCandidate(
-                            sdpMid=candidate_data.get("sdpMid"),
-                            sdpMLineIndex=candidate_data.get("sdpMLineIndex"),
-                            candidate=candidate_data.get("candidate"),
-                        )
-                        await participant.pc.addIceCandidate(candidate)
+                        candidate_str = candidate_data.get("candidate")
+                        if candidate_str:
+                            try:
+                                candidate = candidate_from_sdp(candidate_str)
+                                candidate.sdpMid = candidate_data.get("sdpMid")
+                                candidate.sdpMLineIndex = candidate_data.get("sdpMLineIndex")
+                                await participant.pc.addIceCandidate(candidate)
+                            except Exception as e:
+                                # ICE candidate may arrive after connection is closed
+                                print(f"Failed to add ICE candidate: {e}")
 
                 elif msg_type == "leave" and participant:
                     break
@@ -126,27 +154,30 @@ async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
 
 
 async def relay_tracks_and_renegotiate(new_participant: Participant):
-    """Relay new participant's tracks to others and trigger renegotiation."""
-    # Wait for tracks to be established
-    await asyncio.sleep(1.0)
-
-    if not new_participant.tracks:
+    """Notify other participants to renegotiate to receive new tracks."""
+    # Wait for tracks to be established - poll until we have them or timeout
+    for _ in range(20):  # Wait up to 10 seconds
+        await asyncio.sleep(0.5)
+        if new_participant.tracks:
+            print(f"Tracks received for {new_participant.id}: {list(new_participant.tracks.keys())}")
+            break
+    else:
+        print(f"Timeout waiting for tracks from {new_participant.id}")
         return
 
-    for other in meeting.get_other_participants(new_participant.id):
-        if other.pc and other.pc.connectionState == "connected":
-            # Add relay tracks from new participant
-            for kind, track in new_participant.tracks.items():
-                relay_track = meeting.relay.subscribe(track)
-                other.pc.addTrack(relay_track)
-
-            # Create new offer for renegotiation
-            offer = await other.pc.createOffer()
-            await other.pc.setLocalDescription(offer)
-
-            # Send renegotiation offer to the other participant
-            await signaling.send_to(other.id, {
-                "type": "renegotiate",
-                "sdp": other.pc.localDescription.sdp,
-            })
+    other_participants = meeting.get_other_participants(new_participant.id)
+    print(f"Notifying {len(other_participants)} other participants to renegotiate")
+    
+    for other in other_participants:
+        try:
+            print(f"Checking {other.id}: pc={other.pc is not None}, state={other.pc.connectionState if other.pc else 'N/A'}")
+            if other.pc and other.pc.connectionState == "connected":
+                # Tell the client to send a new offer - the server will add new tracks when handling it
+                await signaling.send_to(other.id, {
+                    "type": "request_offer",
+                    "reason": "new_participant",
+                })
+                print(f"Requested new offer from {other.id}")
+        except Exception as e:
+            print(f"Failed to request offer from {other.id}: {e}")
 

@@ -68,17 +68,34 @@ class Meeting:
         @pc.on("track")
         async def on_track(track: MediaStreamTrack):
             """Handle incoming track from participant."""
+            print(f"Track received from {participant.id}: {track.kind}")
             participant.tracks[track.kind] = track
 
             @track.on("ended")
             async def on_ended():
+                print(f"Track ended from {participant.id}: {track.kind}")
                 if track.kind in participant.tracks:
                     del participant.tracks[track.kind]
 
         @pc.on("connectionstatechange")
         async def on_connectionstatechange():
-            if pc.connectionState in ("failed", "closed", "disconnected"):
+            print(f"Connection state for {participant.id}: {pc.connectionState}")
+            # Clean up on terminal states - "disconnected" can recover, but "failed"/"closed" cannot
+            if pc.connectionState in ("failed", "closed"):
+                print(f"Connection {pc.connectionState} for {participant.id}, removing participant")
                 await self.remove_participant(participant.id)
+
+        @pc.on("signalingstatechange") 
+        async def on_signalingstatechange():
+            print(f"Signaling state for {participant.id}: {pc.signalingState}")
+
+        @pc.on("icegatheringstatechange")
+        async def on_icegatheringstatechange():
+            print(f"ICE gathering state for {participant.id}: {pc.iceGatheringState}")
+
+        @pc.on("iceconnectionstatechange")
+        async def on_iceconnectionstatechange():
+            print(f"ICE connection state for {participant.id}: {pc.iceConnectionState}")
 
         return pc
 
@@ -87,19 +104,39 @@ class Meeting:
     ) -> RTCSessionDescription:
         """Handle an SDP offer from a participant and return an answer."""
         pc = participant.pc
+        is_renegotiation = pc is not None
+        
         if not pc:
             pc = await self.create_peer_connection(participant)
+        
+        print(f"PC signaling state before setRemoteDescription: {pc.signalingState}")
+        
+        # For renegotiation, we may need to handle the state differently
+        if is_renegotiation and pc.signalingState != "stable":
+            print(f"Warning: PC not in stable state for renegotiation: {pc.signalingState}")
+            # Wait a bit and check again
+            await asyncio.sleep(0.1)
+            if pc.signalingState != "stable":
+                raise Exception(f"Cannot renegotiate: PC in {pc.signalingState} state")
 
         await pc.setRemoteDescription(offer)
+        print(f"PC signaling state after setRemoteDescription: {pc.signalingState}")
 
-        # Add relay tracks from other participants
+        # Add relay tracks from other participants (only tracks not already added)
         for other in self.get_other_participants(participant.id):
             for kind, track in other.tracks.items():
-                relay_track = self.relay.subscribe(track)
-                pc.addTrack(relay_track)
+                # Only add if not already sending a track of this kind from this participant
+                track_key = f"{other.id}_{kind}"
+                if track_key not in participant.relay_tracks:
+                    # buffered=False ensures we get real-time video, not from the start
+                    relay_track = self.relay.subscribe(track, buffered=False)
+                    pc.addTrack(relay_track)
+                    participant.relay_tracks[track_key] = relay_track
+                    print(f"Added {kind} relay track from {other.id} to {participant.id}")
 
         answer = await pc.createAnswer()
         await pc.setLocalDescription(answer)
+        print(f"PC signaling state after setLocalDescription: {pc.signalingState}")
 
         return pc.localDescription
 

@@ -152,18 +152,54 @@ class MeetingClient {
                 break;
 
             case 'renegotiate':
-                // Server is sending a new offer for renegotiation
+                // Server is sending a new offer for renegotiation (legacy)
+                console.log('Received renegotiate offer from server');
                 if (this.peerConnection) {
-                    await this.peerConnection.setRemoteDescription({
-                        type: 'offer',
-                        sdp: data.sdp
-                    });
-                    const answer = await this.peerConnection.createAnswer();
-                    await this.peerConnection.setLocalDescription(answer);
-                    this.ws.send(JSON.stringify({
-                        type: 'answer',
-                        sdp: answer.sdp
-                    }));
+                    try {
+                        await this.peerConnection.setRemoteDescription({
+                            type: 'offer',
+                            sdp: data.sdp
+                        });
+                        console.log('Set remote description for renegotiation');
+                        const answer = await this.peerConnection.createAnswer();
+                        await this.peerConnection.setLocalDescription(answer);
+                        console.log('Created and set local answer, sending to server');
+                        this.ws.send(JSON.stringify({
+                            type: 'answer',
+                            sdp: answer.sdp
+                        }));
+                    } catch (err) {
+                        console.error('Renegotiation failed:', err);
+                    }
+                }
+                break;
+
+            case 'request_offer':
+                // Server is asking us to send a new offer (to receive new tracks)
+                console.log('Server requested new offer:', data.reason);
+                console.log('Current signaling state:', this.peerConnection?.signalingState);
+                console.log('Current connection state:', this.peerConnection?.connectionState);
+                
+                if (this.peerConnection && this.peerConnection.signalingState === 'stable') {
+                    try {
+                        // Small delay to ensure previous operations completed
+                        await new Promise(r => setTimeout(r, 100));
+                        
+                        console.log('Creating new offer...');
+                        const offer = await this.peerConnection.createOffer();
+                        console.log('Setting local description...');
+                        await this.peerConnection.setLocalDescription(offer);
+                        console.log('Sending offer to server...');
+                        this.ws.send(JSON.stringify({
+                            type: 'offer',
+                            sdp: offer.sdp
+                        }));
+                        console.log('Renegotiation offer sent successfully');
+                    } catch (err) {
+                        console.error('Failed to create renegotiation offer:', err);
+                    }
+                } else {
+                    console.warn('Cannot renegotiate: PC state is', this.peerConnection?.signalingState);
                 }
                 break;
         }
@@ -185,23 +221,43 @@ class MeetingClient {
         });
 
         // Handle incoming tracks
+        // Track assignment by participant - audio and video may arrive with different stream IDs
         this.peerConnection.ontrack = (event) => {
-            console.log('Received track:', event.track.kind);
-            // For SFU, tracks come in with the same stream or different streams
-            const stream = event.streams[0] || new MediaStream([event.track]);
+            const track = event.track;
+            console.log('Received track:', track.kind);
             
-            // Find a participant without a stream or create a container
+            // Find a participant who needs this type of track
+            let assignedId = null;
             for (const [id, participant] of this.participants) {
-                if (!participant.stream || !participant.stream.active) {
-                    participant.stream = stream;
-                    this.addVideoElement(id, participant.name, stream, false);
-                    return;
+                // Check if this participant needs a track of this kind
+                const hasTrackOfKind = participant.stream?.getTracks().some(t => t.kind === track.kind);
+                if (!hasTrackOfKind) {
+                    assignedId = id;
+                    
+                    if (!participant.stream) {
+                        // Create new stream for this participant
+                        participant.stream = new MediaStream();
+                        this.addVideoElement(id, participant.name, participant.stream, false);
+                    }
+                    
+                    // Add track to participant's stream
+                    participant.stream.addTrack(track);
+                    
+                    // Update video element if it exists
+                    const videoEl = document.querySelector(`#video-${id} video`);
+                    if (videoEl) {
+                        videoEl.srcObject = participant.stream;
+                    }
+                    break;
                 }
             }
             
-            // If no matching participant, add to a generic remote
-            const remoteId = 'remote_' + Date.now();
-            this.addVideoElement(remoteId, 'Participant', stream, false);
+            // If no participant found, create generic remote
+            if (!assignedId) {
+                assignedId = 'remote_' + Date.now();
+                const stream = new MediaStream([track]);
+                this.addVideoElement(assignedId, 'Participant', stream, false);
+            }
         };
 
         // ICE candidate handling
@@ -398,4 +454,5 @@ class MeetingClient {
 document.addEventListener('DOMContentLoaded', () => {
     window.meetingClient = new MeetingClient();
 });
+
 
