@@ -132,6 +132,17 @@ async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
                                 # ICE candidate may arrive after connection is closed
                                 print(f"Failed to add ICE candidate: {e}")
 
+                elif msg_type == "attention_focus" and participant:
+                    # Relay attention focus to target participant
+                    target_id = data.get("targetId")
+                    if target_id:
+                        await signaling.send_to(target_id, {
+                            "type": "attention_focus",
+                            "fromId": participant.id,
+                            "fromName": participant.name,
+                            "active": data.get("active", False),
+                        })
+
                 elif msg_type == "leave" and participant:
                     break
 
