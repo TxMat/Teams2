@@ -97,7 +97,7 @@ class GazeTracker {
         this.calibrationSkipBtn = document.getElementById('calibration-skip');
         this.calibrationHeader = document.getElementById('calibration-header');
         this.gazePointer = document.getElementById('gaze-pointer');
-        this.totalPoints = 17;
+        this.totalPoints = 9;
         this.clicksPerPoint = 5;
         this.currentClicks = 0;
         this.calibrationOrder = []; // Randomized order of point indices
@@ -297,15 +297,16 @@ class GazeTracker {
  * addressing a specific participant (speaking while looking at them)
  */
 class AttentionTracker {
-    constructor(sendAttentionFocus) {
+    constructor(sendAttentionFocus, onFocusingChange) {
         this.sendAttentionFocus = sendAttentionFocus;
+        this.onFocusingChange = onFocusingChange; // Callback for local UI feedback
         this.voiceDetector = null;
         this.gazeTracker = null;
         this.isSpeaking = false;
         this.currentGazeTarget = null;
         this.gazeTargetStartTime = null;
         this.activeAttentionTarget = null;
-        this.attentionThreshold = 1000; // 2 seconds
+        this.attentionThreshold = 1000; // 1 second
         this.checkInterval = null;
         this.videoContainers = new Map(); // participantId -> DOM element
         this.localParticipantId = null;
@@ -381,10 +382,12 @@ class AttentionTracker {
                 // Clear previous target if any
                 if (this.activeAttentionTarget) {
                     this.sendAttentionFocus(this.activeAttentionTarget, false);
+                    this.onFocusingChange?.(this.activeAttentionTarget, false);
                 }
                 // Set new target
                 this.activeAttentionTarget = this.currentGazeTarget;
                 this.sendAttentionFocus(this.activeAttentionTarget, true);
+                this.onFocusingChange?.(this.activeAttentionTarget, true);
             }
         }
     }
@@ -392,6 +395,7 @@ class AttentionTracker {
     clearAttention() {
         if (this.activeAttentionTarget) {
             this.sendAttentionFocus(this.activeAttentionTarget, false);
+            this.onFocusingChange?.(this.activeAttentionTarget, false);
             this.activeAttentionTarget = null;
         }
         this.gazeTargetStartTime = null;
@@ -726,9 +730,10 @@ class MeetingClient {
     }
 
     async initAttentionTracker() {
-        this.attentionTracker = new AttentionTracker((targetId, active) => {
-            this.sendAttentionFocus(targetId, active);
-        });
+        this.attentionTracker = new AttentionTracker(
+            (targetId, active) => this.sendAttentionFocus(targetId, active),
+            (targetId, active) => this.setFocusingIndicator(targetId, active)
+        );
         await this.attentionTracker.init(this.localStream, this.participantId);
     }
 
@@ -738,14 +743,36 @@ class MeetingClient {
             return;
         }
 
+        // If already calibrated, toggle debug pointer instead
+        if (this.attentionTracker.isGazeCalibrated()) {
+            this.toggleDebugPointer();
+            return;
+        }
+
         this.showToast('Starting eye tracking calibration...', 'success');
         const success = await this.attentionTracker.calibrate();
         
         if (success) {
             this.calibrateGazeBtn.classList.add('calibrated');
-            this.showToast('Eye tracking calibrated!', 'success');
+            this.showToast('Eye tracking calibrated! Click again to toggle debug pointer.', 'success');
         } else {
             this.showToast('Calibration skipped', '');
+        }
+    }
+
+    toggleDebugPointer() {
+        if (!this.attentionTracker?.gazeTracker) return;
+        
+        const isVisible = this.attentionTracker.gazeTracker.showDebugPointer;
+        this.attentionTracker.gazeTracker.setDebugPointerVisible(!isVisible);
+        this.showToast(isVisible ? 'Debug pointer hidden' : 'Debug pointer shown', '');
+    }
+
+    setFocusingIndicator(targetId, active) {
+        // Show/hide the "focusing on" indicator on the target's video
+        const container = document.getElementById(`video-${targetId}`);
+        if (container) {
+            container.classList.toggle('focusing-on', active);
         }
     }
 
@@ -877,6 +904,11 @@ class MeetingClient {
         }
         this.attentionHighlightActive = false;
         this.calibrateGazeBtn.classList.remove('calibrated');
+        
+        // Clear any focusing indicators
+        document.querySelectorAll('.video-container.focusing-on').forEach(el => {
+            el.classList.remove('focusing-on');
+        });
 
         // Clean up timer
         if (this.timerInterval) {
