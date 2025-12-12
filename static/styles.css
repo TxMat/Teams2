@@ -479,26 +479,34 @@ body {
 .calibration-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(10, 10, 15, 0.95);
+    background: rgba(10, 10, 15, 0.97);
     display: none;
-    justify-content: center;
-    align-items: center;
     z-index: 2000;
 }
 
 .calibration-overlay.active {
-    display: flex;
+    display: block;
 }
 
 .calibration-content {
-    text-align: center;
-    width: 100%;
-    height: 100%;
-    padding: 40px;
+    position: absolute;
+    inset: 0;
     display: flex;
     flex-direction: column;
-    justify-content: center;
-    align-items: center;
+}
+
+.calibration-header {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    z-index: 10;
+    pointer-events: none;
+}
+
+.calibration-header.hidden {
+    display: none;
 }
 
 .calibration-content h2 {
@@ -510,64 +518,11 @@ body {
 
 .calibration-instructions {
     color: var(--text-secondary);
-    margin-bottom: 40px;
+    margin-bottom: 20px;
     font-size: 1.1rem;
 }
 
-.calibration-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 0;
-    width: 80vw;
-    height: 60vh;
-    max-width: 1000px;
-    max-height: 600px;
-}
-
-.calibration-point {
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    position: relative;
-}
-
-.calibration-point::before {
-    content: '';
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
-    background: var(--bg-elevated);
-    border: 3px solid var(--accent);
-    transition: all 0.3s ease;
-}
-
-.calibration-point:hover::before {
-    transform: scale(1.2);
-    background: var(--accent);
-    box-shadow: 0 0 20px var(--accent-glow);
-}
-
-.calibration-point.clicked::before {
-    background: var(--success);
-    border-color: var(--success);
-    transform: scale(0.8);
-}
-
-.calibration-point.active::before {
-    animation: calibrationPulse 1s ease-in-out infinite;
-    background: var(--accent);
-}
-
-@keyframes calibrationPulse {
-    0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 var(--accent-glow); }
-    50% { transform: scale(1.3); box-shadow: 0 0 30px var(--accent-glow); }
-}
-
 .calibration-progress {
-    margin-top: 40px;
     color: var(--text-secondary);
     font-size: 1rem;
 }
@@ -575,6 +530,65 @@ body {
 .calibration-progress span {
     color: var(--accent);
     font-weight: 600;
+}
+
+.calibration-grid {
+    position: absolute;
+    inset: 0;
+}
+
+.calibration-point {
+    position: absolute;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    transform: translate(-50%, -50%);
+    padding: 10px;
+    opacity: 0.3;
+    transition: opacity 0.3s ease;
+}
+
+.calibration-point::before {
+    content: '';
+    display: block;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: var(--bg-elevated);
+    border: 3px solid var(--text-muted);
+    transition: all 0.3s ease;
+}
+
+.calibration-point.active {
+    opacity: 1;
+    cursor: pointer;
+}
+
+.calibration-point.active::before {
+    border-color: var(--accent);
+    background: var(--accent);
+    animation: calibrationPulse 0.8s ease-in-out infinite;
+    box-shadow: 0 0 20px var(--accent-glow);
+}
+
+.calibration-point.active:hover::before {
+    transform: scale(1.3);
+}
+
+.calibration-point.clicked {
+    opacity: 1;
+}
+
+.calibration-point.clicked::before {
+    background: var(--success);
+    border-color: var(--success);
+    animation: none;
+    box-shadow: 0 0 10px rgba(34, 197, 94, 0.5);
+}
+
+@keyframes calibrationPulse {
+    0%, 100% { transform: scale(1); box-shadow: 0 0 10px var(--accent-glow); }
+    50% { transform: scale(1.2); box-shadow: 0 0 30px var(--accent-glow); }
 }
 
 .btn-secondary {
@@ -589,6 +603,7 @@ body {
     border-radius: var(--radius-md);
     cursor: pointer;
     transition: var(--transition);
+    pointer-events: auto;
 }
 
 .btn-secondary:hover {
@@ -627,7 +642,6 @@ body {
     z-index: 9999;
     transform: translate(-50%, -50%);
     display: none;
-    transition: left 0.05s ease-out, top 0.05s ease-out;
 }
 
 .gaze-pointer.active {

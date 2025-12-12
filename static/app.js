@@ -95,12 +95,29 @@ class GazeTracker {
         this.calibrationPoints = document.querySelectorAll('.calibration-point');
         this.calibrationCurrent = document.getElementById('calibration-current');
         this.calibrationSkipBtn = document.getElementById('calibration-skip');
+        this.calibrationHeader = document.getElementById('calibration-header');
         this.gazePointer = document.getElementById('gaze-pointer');
-        this.currentPointIndex = 0;
+        this.totalPoints = 17;
         this.clicksPerPoint = 5;
         this.currentClicks = 0;
+        this.calibrationOrder = []; // Randomized order of point indices
+        this.currentOrderIndex = 0; // Current position in the randomized order
         this.onCalibrationComplete = null;
-        this.showDebugPointer = true; // Enable debug pointer by default
+        this.showDebugPointer = true;
+        
+        // Smoothing parameters
+        this.smoothedGaze = { x: 0, y: 0 };
+        this.smoothingFactor = 0.3; // Lower = smoother but more lag (0.1-0.5 recommended)
+    }
+
+    shuffleArray(array) {
+        // Fisher-Yates shuffle
+        const shuffled = [...array];
+        for (let i = shuffled.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+        }
+        return shuffled;
     }
 
     async init() {
@@ -110,11 +127,24 @@ class GazeTracker {
         }
 
         try {
+            let isFirstGaze = true;
             await webgazer
                 .setGazeListener((data) => {
                     if (data) {
-                        this.currentGaze = { x: data.x, y: data.y };
-                        this.updateDebugPointer(data.x, data.y);
+                        // Initialize smoothed values on first reading
+                        if (isFirstGaze) {
+                            this.smoothedGaze.x = data.x;
+                            this.smoothedGaze.y = data.y;
+                            isFirstGaze = false;
+                        } else {
+                            // Apply exponential smoothing to reduce jitter
+                            this.smoothedGaze.x = this.smoothedGaze.x + this.smoothingFactor * (data.x - this.smoothedGaze.x);
+                            this.smoothedGaze.y = this.smoothedGaze.y + this.smoothingFactor * (data.y - this.smoothedGaze.y);
+                        }
+                        
+                        // Use smoothed values
+                        this.currentGaze = { x: this.smoothedGaze.x, y: this.smoothedGaze.y };
+                        this.updateDebugPointer();
                     }
                 })
                 .saveDataAcrossSessions(true)
@@ -135,11 +165,11 @@ class GazeTracker {
         }
     }
 
-    updateDebugPointer(x, y) {
+    updateDebugPointer() {
         if (!this.showDebugPointer || !this.gazePointer || !this.isCalibrated) return;
         
-        this.gazePointer.style.left = `${x}px`;
-        this.gazePointer.style.top = `${y}px`;
+        this.gazePointer.style.left = `${this.smoothedGaze.x}px`;
+        this.gazePointer.style.top = `${this.smoothedGaze.y}px`;
     }
 
     setDebugPointerVisible(visible) {
@@ -152,15 +182,21 @@ class GazeTracker {
     async calibrate() {
         return new Promise((resolve) => {
             this.onCalibrationComplete = resolve;
-            this.currentPointIndex = 0;
             this.currentClicks = 0;
+            this.currentOrderIndex = 0;
+            
+            // Create randomized order of points
+            this.calibrationOrder = this.shuffleArray(
+                Array.from({ length: this.totalPoints }, (_, i) => i)
+            );
             
             // Reset all points
             this.calibrationPoints.forEach(p => p.classList.remove('clicked', 'active'));
             this.calibrationCurrent.textContent = '1';
             
-            // Show first point as active
-            this.calibrationPoints[0].classList.add('active');
+            // Show first random point as active
+            const firstPointIndex = this.calibrationOrder[0];
+            this.calibrationPoints[firstPointIndex].classList.add('active');
             
             // Show overlay
             this.calibrationOverlay.classList.add('active');
@@ -179,14 +215,16 @@ class GazeTracker {
         });
     }
 
-    handlePointClick(index) {
-        if (index !== this.currentPointIndex) return;
+    handlePointClick(clickedIndex) {
+        // Only accept clicks on the currently active point
+        const expectedIndex = this.calibrationOrder[this.currentOrderIndex];
+        if (clickedIndex !== expectedIndex) return;
         
         this.currentClicks++;
         
         // Record calibration data point
         if (typeof webgazer !== 'undefined') {
-            const point = this.calibrationPoints[index];
+            const point = this.calibrationPoints[clickedIndex];
             const rect = point.getBoundingClientRect();
             const x = rect.left + rect.width / 2;
             const y = rect.top + rect.height / 2;
@@ -195,16 +233,17 @@ class GazeTracker {
         
         if (this.currentClicks >= this.clicksPerPoint) {
             // Mark point as completed
-            this.calibrationPoints[index].classList.remove('active');
-            this.calibrationPoints[index].classList.add('clicked');
+            this.calibrationPoints[clickedIndex].classList.remove('active');
+            this.calibrationPoints[clickedIndex].classList.add('clicked');
             
-            // Move to next point
-            this.currentPointIndex++;
+            // Move to next point in random order
+            this.currentOrderIndex++;
             this.currentClicks = 0;
             
-            if (this.currentPointIndex < this.calibrationPoints.length) {
-                this.calibrationCurrent.textContent = (this.currentPointIndex + 1).toString();
-                this.calibrationPoints[this.currentPointIndex].classList.add('active');
+            if (this.currentOrderIndex < this.totalPoints) {
+                this.calibrationCurrent.textContent = (this.currentOrderIndex + 1).toString();
+                const nextPointIndex = this.calibrationOrder[this.currentOrderIndex];
+                this.calibrationPoints[nextPointIndex].classList.add('active');
             } else {
                 // Calibration complete
                 this.calibrationOverlay.classList.remove('active');
@@ -266,7 +305,7 @@ class AttentionTracker {
         this.currentGazeTarget = null;
         this.gazeTargetStartTime = null;
         this.activeAttentionTarget = null;
-        this.attentionThreshold = 0; // 2 seconds
+        this.attentionThreshold = 1000; // 2 seconds
         this.checkInterval = null;
         this.videoContainers = new Map(); // participantId -> DOM element
         this.localParticipantId = null;
@@ -333,7 +372,7 @@ class AttentionTracker {
 
         // Check if we should trigger attention
         if (
-            // this.isSpeaking && does not work for now (todo : fix later)
+            // this.isSpeaking && does not work for now (todo : fix)
             this.currentGazeTarget &&
             this.gazeTargetStartTime &&
             Date.now() - this.gazeTargetStartTime >= this.attentionThreshold

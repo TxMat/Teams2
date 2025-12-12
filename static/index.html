@@ -128,21 +128,36 @@
     <!-- Calibration Overlay -->
     <div id="calibration-overlay" class="calibration-overlay">
         <div class="calibration-content">
-            <h2>Eye Tracking Calibration</h2>
-            <p class="calibration-instructions">Click on each point as it appears. Look at the point while clicking.</p>
-            <div class="calibration-grid">
-                <button class="calibration-point" data-point="0"></button>
-                <button class="calibration-point" data-point="1"></button>
-                <button class="calibration-point" data-point="2"></button>
-                <button class="calibration-point" data-point="3"></button>
-                <button class="calibration-point" data-point="4"></button>
-                <button class="calibration-point" data-point="5"></button>
-                <button class="calibration-point" data-point="6"></button>
-                <button class="calibration-point" data-point="7"></button>
-                <button class="calibration-point" data-point="8"></button>
+            <div class="calibration-header" id="calibration-header">
+                <h2>Eye Tracking Calibration</h2>
+                <p class="calibration-instructions">Click each glowing point 5 times while looking at it</p>
+                <p class="calibration-progress">Point <span id="calibration-current">1</span> of 17</p>
+                <button id="calibration-skip" class="btn-secondary">Skip Calibration</button>
             </div>
-            <p class="calibration-progress">Click point <span id="calibration-current">1</span> of 9</p>
-            <button id="calibration-skip" class="btn-secondary">Skip Calibration</button>
+            <div class="calibration-grid">
+                <!-- Row 1: Top edge (5 points) -->
+                <button class="calibration-point" data-point="0" style="left: 2%; top: 2%;"></button>
+                <button class="calibration-point" data-point="1" style="left: 25%; top: 2%;"></button>
+                <button class="calibration-point" data-point="2" style="left: 50%; top: 2%;"></button>
+                <button class="calibration-point" data-point="3" style="left: 75%; top: 2%;"></button>
+                <button class="calibration-point" data-point="4" style="left: 98%; top: 2%;"></button>
+                <!-- Row 2: Upper area (3 points) -->
+                <button class="calibration-point" data-point="5" style="left: 2%; top: 33%;"></button>
+                <button class="calibration-point" data-point="6" style="left: 50%; top: 33%;"></button>
+                <button class="calibration-point" data-point="7" style="left: 98%; top: 33%;"></button>
+                <!-- Row 3: Middle (5 points) -->
+                <button class="calibration-point" data-point="8" style="left: 2%; top: 50%;"></button>
+                <button class="calibration-point" data-point="9" style="left: 25%; top: 50%;"></button>
+                <button class="calibration-point" data-point="10" style="left: 50%; top: 50%;"></button>
+                <button class="calibration-point" data-point="11" style="left: 75%; top: 50%;"></button>
+                <button class="calibration-point" data-point="12" style="left: 98%; top: 50%;"></button>
+                <!-- Row 4: Lower area (2 points) -->
+                <button class="calibration-point" data-point="13" style="left: 33%; top: 67%;"></button>
+                <button class="calibration-point" data-point="14" style="left: 67%; top: 67%;"></button>
+                <!-- Row 5: Bottom edge (2 points at corners) -->
+                <button class="calibration-point" data-point="15" style="left: 2%; top: 98%;"></button>
+                <button class="calibration-point" data-point="16" style="left: 98%; top: 98%;"></button>
+            </div>
         </div>
     </div>
 
